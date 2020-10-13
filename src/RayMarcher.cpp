@@ -339,7 +339,12 @@ public:
       return *this;
    }
 
-   CRenderObject::TPtr GetRenderObject() const
+   CRenderObject::TConstPtr GetRenderObject() const
+   {
+      return mpRenderObject;
+   }
+
+   CRenderObject::TPtr const & RenderObject() const
    {
       return mpRenderObject;
    }
@@ -467,6 +472,15 @@ private:
 class CCompositeRenderObject : public CRenderObject
 {
 public:
+   explicit CCompositeRenderObject(std::initializer_list<CObjectContainer> const & objects)
+   {
+      mObjectList.reserve(objects.size());
+      for (CObjectContainer const & object : objects)
+      {
+         mObjectList.push_back(CRenderObject::TPtr(object.RenderObject()));
+      }
+   }
+
    virtual CColor4f const GetColorAtPoint( CVector3f const& point ) const override
    {
 #if 0
@@ -531,12 +545,8 @@ class CRenderUnion : public CCompositeRenderObject
 {
 public:
    explicit CRenderUnion( std::initializer_list<CObjectContainer> const & objects )
+      : CCompositeRenderObject(objects)
    {
-      mObjectList.reserve( objects.size() );
-      for (CObjectContainer const& object : objects)
-      {
-         mObjectList.push_back( CRenderObject::TPtr( object.GetRenderObject() ) );
-      }
    }
 
    virtual real32 GetDistanceToPoint( CVector3f const& point ) const override
@@ -558,12 +568,8 @@ class CRenderIntersection : public CCompositeRenderObject
 {
 public:
    explicit CRenderIntersection( std::initializer_list<CObjectContainer> const & objects )
+      : CCompositeRenderObject(objects)
    {
-      mObjectList.reserve( objects.size() );
-      for (CObjectContainer const& object : objects)
-      {
-         mObjectList.push_back( CRenderObject::TPtr( object.GetRenderObject() ) );
-      }
    }
 
    virtual real32 GetDistanceToPoint( CVector3f const& point ) const override
@@ -585,12 +591,8 @@ class CRenderDifference : public CCompositeRenderObject
 {
 public:
    explicit CRenderDifference( std::initializer_list<CObjectContainer> const& objects )
+      : CCompositeRenderObject(objects)
    {
-      mObjectList.reserve( objects.size() );
-      for (CObjectContainer const& object : objects)
-      {
-         mObjectList.push_back( CRenderObject::TPtr( object.GetRenderObject() ) );
-      }
    }
 
    virtual real32 GetDistanceToPoint( CVector3f const& point ) const override
@@ -614,13 +616,9 @@ class CRenderSmoothUnion : public CCompositeRenderObject
 {
 public:
    explicit CRenderSmoothUnion( std::initializer_list<CObjectContainer> const& objects, real32 const k )
-      : mK(k)
+      : CCompositeRenderObject(objects)
+      , mK(k)
    {
-      mObjectList.reserve( objects.size() );
-      for (CObjectContainer const& object : objects)
-      {
-         mObjectList.push_back( CRenderObject::TPtr( object.GetRenderObject() ) );
-      }
    }
 
    static real32 const SmoothUnion( real32 const d1, real32 const d2, real32 const k )
@@ -657,13 +655,9 @@ class CRenderBlend : public CCompositeRenderObject
 {
 public:
    explicit CRenderBlend( std::initializer_list<CObjectContainer> const& objects, real32 const k )
-      : mK( k )
+      : CCompositeRenderObject(objects)
+      , mK( k )
    {
-      mObjectList.reserve( objects.size() );
-      for (CObjectContainer const& object : objects)
-      {
-         mObjectList.push_back( CRenderObject::TPtr( object.GetRenderObject() ) );
-      }
    }
 
    virtual real32 GetDistanceToPoint( CVector3f const& point ) const override
@@ -694,7 +688,6 @@ private:
    real32 mK;
 };
 
-
 //-----------------------------------------------------------------------------
 
 class CLightObject
@@ -707,7 +700,10 @@ public:
 
    virtual CColor4f CalculateValueAtPosition( CVector3f const& position, CVector3f const& surfaceNormal ) const = 0;
    virtual CVector3f const& GetPosition() const = 0;
-   virtual bool CastsShadow() const = 0;
+   virtual bool CastsShadow() const 
+   {
+      return false;
+   }
 };
 
 //-----------------------------------------------------------------------------
@@ -731,18 +727,62 @@ public:
       return skZero;
    }
 
-   virtual bool CastsShadow() const
-   {
-      return false;
-   }
-
 private:
    CColor4f mColor;
 };
 
 //-----------------------------------------------------------------------------
 
-class CPointLightObject : public CLightObject
+class SAttenuationInfo
+{
+public:
+   // attenuation
+   real32 constant{ 0.f };
+   real32 linear{ 0.f };
+   real32 exponential{ 1.f };
+};
+
+class CShadowCastingLightObject : public CLightObject
+{
+public:
+
+   virtual bool CastsShadow() const override
+   {
+      return true;
+   }
+
+   real32 GetPenumbra() const
+   {
+      return mPenumbra;
+   }
+
+   void SetAttenuationInfo(SAttenuationInfo const& attenuation)
+   {
+      mAttenuation = attenuation;
+   }
+
+   SAttenuationInfo const& GetAttenuationInfo() const
+   {
+      return mAttenuation;
+   }
+   void SetTransform(CTransform4f const& transform)
+   {
+      mTransform = transform;
+   }
+
+   CTransform4f const& GetTransform() const
+   {
+      return mTransform;
+   }
+
+private:
+   CTransform4f mTransform{ CTransform4f::Identity() };
+   real32 mPenumbra{ 24 };
+   SAttenuationInfo mAttenuation;
+};
+
+
+class CPointLightObject : public CShadowCastingLightObject
 {
 public:
    explicit CPointLightObject( CVector3f const& position, CColor4f const& color )
@@ -753,7 +793,7 @@ public:
 
    virtual CColor4f CalculateValueAtPosition( CVector3f const& position, CVector3f const & surfaceNormal ) const override
    {
-      CVector3f const direction = (mPosition - position).AsNormalized();
+      CVector3f const direction = ((GetTransform()*mPosition) - position).AsNormalized();
       real32 const angle = CVector3f::Dot( surfaceNormal, direction );
       if (angle < 0.f)
       {
@@ -767,9 +807,44 @@ public:
       return mPosition;
    }
 
-   virtual bool CastsShadow() const override
+   CColor4f const& GetColor() const
    {
-      return true;
+      return mColor;
+   }
+
+private:
+   CVector3f mPosition;
+   CColor4f mColor;
+};
+
+class CSpotLightObject : public CShadowCastingLightObject
+{
+public:
+   explicit CSpotLightObject(CVector3f const& position, CVector3f const & direction, real32 const angle, CColor4f const& color)
+      : mPosition(position)
+      , mDirection( direction.AsNormalized() )
+      , mCosAngle( ::cosf( CRelAngle::FromDegrees(angle).AsRadians() ))
+      , mColor(color)
+   {
+   }
+
+   virtual CColor4f CalculateValueAtPosition(CVector3f const& position, CVector3f const& surfaceNormal) const override
+   {
+      CVector3f const direction = (GetTransform() * mPosition - position).AsNormalized();
+      real32 const angleToLight = CVector3f::Dot(surfaceNormal, direction);
+      CVector3f const spotDirection = GetTransform().GetInverse().TransposeRotate(-mDirection);
+      real32 const angleInSpot = CVector3f::Dot(direction, spotDirection);
+
+      if (angleToLight < 0.f || angleInSpot < mCosAngle)
+      {
+         return CColor4f::Black();
+      }
+      return  mColor * angleToLight;
+   }
+
+   virtual CVector3f const& GetPosition() const override
+   {
+      return mPosition;
    }
 
    CColor4f const& GetColor() const
@@ -779,6 +854,8 @@ public:
 
 private:
    CVector3f mPosition;
+   CVector3f mDirection;
+   real32 mCosAngle;
    CColor4f mColor;
 };
 
@@ -793,7 +870,7 @@ public:
 
    virtual CColor4f CalculateValueAtPosition( CVector3f const& /*position*/, CVector3f const& surfaceNormal ) const override
    {
-      real32 const angle = CVector3f::Dot( surfaceNormal, mDirection );
+      real32 const angle = CVector3f::Dot( surfaceNormal, -mDirection );
       if (angle < 0.f)
       {
          return CColor4f::Black();
@@ -805,11 +882,6 @@ public:
    {
       static CVector3f const skZero( CVector3f::Zero() );
       return skZero;
-   }
-
-   virtual bool CastsShadow() const override
-   {
-      return false;
    }
 
    CColor4f const& GetColor() const
@@ -938,13 +1010,18 @@ public:
    {
    }
 
-   CLightObject const * GetLightObject() const
+   CLightObject::TConstPtr GetLightObject() const
+   {
+      return mpLightObject;
+   }
+
+   CLightObject::TPtr const & LightObject() const
    {
       return mpLightObject;
    }
 
 private:
-   CLightObject* mpLightObject;
+   CLightObject::TPtr mpLightObject;
 };
 
 //-------------------------------------------------------------------------
@@ -1085,12 +1162,22 @@ mObjects.push_back( CRenderObject::TConstPtr( object ) );
 
          if (pLight->CastsShadow())
          {
-            real32 const shadow = MarchShadowRay( CInfiniteRay( startPoint, toLight ), distance, 24.f );
+            CShadowCastingLightObject const& shadowLight = static_cast<CShadowCastingLightObject const&>(*pLight);
+            
+            real32 const shadow = MarchShadowRay( CInfiniteRay( startPoint, toLight ), distance, shadowLight.GetPenumbra() );
 
             if (shadow > 0.f)
             {
+               SAttenuationInfo const attenuationInfo = shadowLight.GetAttenuationInfo();
+               real32 const attenuationFactor = 1.f / (
+                  attenuationInfo.constant +
+                  attenuationInfo.linear * distance +
+                  attenuationInfo.exponential * distance * distance
+                  );
+                                                
+                   
                color += pLight->CalculateValueAtPosition( collisionPoint, normal ) * surfaceColor 
-                  * (shadow * surfaceInfo.albedo);
+                  * (shadow * surfaceInfo.albedo * attenuationFactor);
             }
          }
          else
@@ -1299,6 +1386,18 @@ namespace NScene
          : CLightObjectContainer( new TClassType( args... ) )
       {
       }
+
+      TLightObjectContainer& operator<<(SAttenuationInfo const& attenuation)
+      {
+         static_cast<TClassType&>(*LightObject()).SetAttenuationInfo(attenuation);
+         return *this;
+      }
+
+      TLightObjectContainer& operator<<(CTransform4f const& transform)
+      {
+         static_cast<TClassType&>(*LightObject()).SetTransform(transform);
+         return *this;
+      }
    };
 
    // convenience types
@@ -1331,9 +1430,11 @@ namespace NScene
    using blend = TObjectContainer<CRenderBlend>;
 
    // lights
+   using attenuation = SAttenuationInfo;
    using ambientlight = TLightObjectContainer<CAmbientLightObject>;
-   using pointlight = TLightObjectContainer<CPointLightObject>;
    using directionallight = TLightObjectContainer<CDirectionalLightObject>;
+   using pointlight = TLightObjectContainer<CPointLightObject>;
+   using spotlight = TLightObjectContainer<CSpotLightObject>;
    
 
    // convenience functions

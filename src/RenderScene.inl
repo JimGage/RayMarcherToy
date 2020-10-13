@@ -43,12 +43,20 @@ scene << camera( vector3( 0.f, 15.f, 15.f ), vector3( 0.f, 0.f, 0.f ) );
 
 // setup some lights
 scene += ambientlight( color( 0.1f, 0.1f, 0.1f ) );
-scene += directionallight( vector3( 0.f, -1.f, 0.f ), color( 0.7f, 0.9f, 0.9f ) );
-scene += pointlight( vector3( -1.f, 20.f, 15.f ), color( 0.9f, 0.9f, 0.8f ) );
+scene += directionallight( vector3( 0.f, -1.f, 0.f ), color( 0.1f, 0.1f, 0.2f ) );
+
+// choose between point and spot light
+#if 1
+scene += pointlight(vector3(0.f, 5.f + sinf(time * 3.f), 0.f), color(0.9f, 0.9f, 0.8f) * 10.f) << attenuation{ .linear = 0.7f, .exponential = 0.3f };
+#else
+scene += spotlight( vector3(0.f, 20.f, 0.f ), vector3(0.f, -1.f, 0.f ), 10.f, color( 1.f, 1.f, 1.f ) ) << attenuation{ .constant = 0.8f, .linear = 0.2f, .exponential = 0.f }
+<< rotatez(sinf(time*3.f) * 10.f);
+#endif
 
 
 // some test objects
 scene += plane( vector3( 0.f, 1.f, 0.f ) ) << translate( 0.f, -5.f, 0.f ) << checker( color(0xeeeeee) , color(0xaaaaaa) );
+
 
 scene += csg_difference( { torus( 1.f,2.f ), cube( 4.f ) << translate( 2, 0, 2 ) } ) << translate(-6,0,0)  << surface{ .dielectric = 0.4f };
 
@@ -66,4 +74,3 @@ scene += blend(
       cube( 3.f ),
       sphere( 3.f ) << color( 0.5f,0.1f,0.1f )
    }, 1.f + sinf( time * 3.f - (3.1415926f/2.f) ) ) << surface{ .dielectric = 0.3f };
-
